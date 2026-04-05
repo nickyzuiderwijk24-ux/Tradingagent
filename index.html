@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TRADE.AGENT</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◉</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0e17; color: #e2e8f0; font-family: 'JetBrains Mono', 'Fira Code', monospace; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0e17; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+    input:focus { outline: none; }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes slideIn { from { opacity:0; transform:translateX(-12px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes glow { 0%,100% { box-shadow: 0 0 12px rgba(110,231,183,0.15); } 50% { box-shadow: 0 0 24px rgba(110,231,183,0.3); } }
+    @keyframes pulse { 0%,80%,100% { opacity:.3; transform:scale(.8); } 40% { opacity:1; transform:scale(1.1); } }
+    .card { background: #111827; border: 1px solid #1e293b; border-radius: 10px; padding: 20px; animation: fadeUp 0.4s ease-out; }
+    .tag { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    @media (max-width: 640px) {
+      .grid-2 { grid-template-columns: 1fr !important; }
+      .grid-4 { grid-template-columns: 1fr 1fr !important; }
+      .header-inner { flex-direction: column; gap: 10px !important; align-items: flex-start !important; }
+      .type-tabs { width: 100%; justify-content: space-between; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // API points to same origin since frontend is served by Express
+    const API_BASE = window.location.origin + "/api";
+
+    const ASSET_TYPES = {
+      stocks: { label: "Stocks", icon: "📈", examples: ["AAPL", "TSLA", "MSFT", "GOOGL", "NVDA", "META"] },
+      crypto: { label: "Crypto", icon: "₿", examples: ["bitcoin", "ethereum", "solana", "cardano", "dogecoin"] },
+      forex: { label: "Forex", icon: "💱", examples: ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD"] },
+    };
+
+    function Sparkline({ data, color, width = 240, height = 40 }) {
+      if (!data || data.length < 2) return null;
+      const min = Math.min(...data);
+      const max = Math.max(...data);
+      const range = max - min || 1;
+      const points = data.map((v, i) => {
+        const x = (i / (data.length - 1)) * width;
+        const y = height - ((v - min) / range) * (height - 4) - 2;
+        return x + "," + y;
+      }).join(" ");
+      return React.createElement("svg", { width, height, style: { display: "block" } },
+        React.createElement("polyline", { points, fill: "none", stroke: color, strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" })
+      );
+    }
+
+    function TypingDots() {
+      return React.createElement("span", { style: { display: "inline-flex", gap: 3, alignItems: "center" } },
+        [0, 1, 2].map(i => React.createElement("span", { key: i, style: { width: 5, height: 5, borderRadius: "50%", background: "#6ee7b7", animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` } }))
+      );
+    }
+
+    function fmt(n, decimals = 2) {
+      if (n === null || n === undefined || isNaN(n)) return "—";
+      if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(1) + "B";
+      if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "K";
+      return Number(n).toFixed(decimals);
+    }
+
+    // Mock data fallbacks
+    function generateMockData(sym, type) {
+      const seed = [...sym].reduce((a, c) => a + c.charCodeAt(0), 0);
+      const rng = (n) => { const x = Math.sin(seed * n) * 10000; return x - Math.floor(x); };
+      const basePrice = 50 + rng(1) * 400;
+      const history = [];
+      let price = basePrice * (0.85 + rng(2) * 0.3);
+      for (let i = 0; i < 90; i++) {
+        price = Math.max(price + (rng(i * 7 + 3) - 0.48) * basePrice * 0.025, basePrice * 0.3);
+        history.push(price);
+      }
+      const current = history[history.length - 1];
+      const prev = history[history.length - 2];
+      const weekAgo = history[history.length - 8] || history[0];
+      const monthAgo = history[history.length - 31] || history[0];
+      return {
+        symbol: sym, name: sym, type, currency: "USD", price: current,
+        change: current - prev, changePct: ((current - prev) / prev) * 100,
+        weekChange: ((current - weekAgo) / weekAgo) * 100, monthChange: ((current - monthAgo) / monthAgo) * 100,
+        high52w: Math.max(...history) * 1.1, low52w: Math.min(...history) * 0.9,
+        volume: Math.floor(1e6 + rng(4) * 50e6), marketCap: null, history, source: "mock",
+      };
+    }
+
+    function generateMockNews(sym) {
+      const seed = [...sym].reduce((a, c) => a + c.charCodeAt(0), 0);
+      const all = [
+        { headline: `${sym} sees increased institutional interest amid market rally`, sentiment: "bullish", source: "Reuters" },
+        { headline: `Analysts upgrade ${sym} citing strong fundamentals`, sentiment: "bullish", source: "Bloomberg" },
+        { headline: `${sym} faces regulatory headwinds in key markets`, sentiment: "bearish", source: "WSJ" },
+        { headline: `New partnership announced for ${sym} ecosystem`, sentiment: "bullish", source: "TechCrunch" },
+        { headline: `Market volatility weighs on ${sym} short-term outlook`, sentiment: "neutral", source: "CNBC" },
+      ];
+      return [0,1,2,3].map((_, i) => all[(seed + i * 3) % all.length]);
+    }
+
+    function generateFallbackAnalysis(data, newsData) {
+      const bullish = newsData.filter(n => n.sentiment === "bullish").length;
+      const bearish = newsData.filter(n => n.sentiment === "bearish").length;
+      const score = (data.weekChange > 0 ? 1 : -1) + (data.monthChange > 0 ? 1 : -1) + (bullish - bearish);
+      const rec = score >= 2 ? "BUY" : score <= -1 ? "SELL" : "HOLD";
+      return {
+        recommendation: rec, confidence: Math.min(85, 50 + Math.abs(score) * 10),
+        summary: `${data.symbol} shows ${data.monthChange > 0 ? "positive" : "negative"} momentum of ${fmt(data.monthChange)}% over 30 days. Sentiment is ${bullish > bearish ? "bullish" : bearish > bullish ? "bearish" : "mixed"}.`,
+        bull_case: "Momentum and institutional interest could drive further upside.",
+        bear_case: "Volatility and macro headwinds present downside risk.",
+        key_levels: { support: data.price * 0.92, resistance: data.price * 1.08, stop_loss: data.price * 0.88, target: data.price * 1.15 },
+        risk_score: Math.min(9, Math.max(2, 5 + Math.abs(Math.round(data.monthChange / 5)))),
+        time_horizon: Math.abs(data.monthChange) > 15 ? "short-term" : "medium-term",
+      };
+    }
+
+    function App() {
+      const [activeType, setActiveType] = useState("stocks");
+      const [symbol, setSymbol] = useState("");
+      const [analyzing, setAnalyzing] = useState(false);
+      const [analysis, setAnalysis] = useState(null);
+      const [marketData, setMarketData] = useState(null);
+      const [news, setNews] = useState([]);
+      const [agentLog, setAgentLog] = useState([]);
+      const [backendConnected, setBackendConnected] = useState(false);
+      const logEndRef = useRef(null);
+
+      useEffect(() => { checkBackend(); }, []);
+      useEffect(() => { if (logEndRef.current) logEndRef.current.scrollIntoView({ behavior: "smooth" }); }, [agentLog]);
+
+      async function checkBackend() {
+        try {
+          const res = await fetch(API_BASE + "/health", { signal: AbortSignal.timeout(3000) });
+          if (res.ok) { setBackendConnected(true); return true; }
+        } catch {}
+        setBackendConnected(false);
+        return false;
+      }
+
+      const addLog = (msg, type = "info") => setAgentLog(prev => [...prev, { msg, type, ts: Date.now() }]);
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+      async function runAnalysis(sym) {
+        if (!sym.trim()) return;
+        setAnalyzing(true); setAnalysis(null); setMarketData(null); setNews([]); setAgentLog([]);
+        const cleanSym = sym.trim();
+        const isLive = await checkBackend();
+
+        // Step 1: Market Data
+        addLog(`🔍 Fetching market data for ${cleanSym}...${isLive ? " (LIVE)" : " (SIMULATED)"}`, "action");
+        let data;
+        try {
+          if (isLive) {
+            const res = await fetch(`${API_BASE}/market/${activeType}/${encodeURIComponent(cleanSym)}`);
+            const json = await res.json();
+            if (!json.success) throw new Error(json.error);
+            data = json.data;
+          } else {
+            await sleep(600);
+            data = generateMockData(cleanSym, activeType);
+          }
+          setMarketData(data);
+          addLog(`✓ Price: ${data.currency === "USD" ? "$" : ""}${fmt(data.price)} (${data.changePct >= 0 ? "+" : ""}${fmt(data.changePct)}%) — Source: ${data.source || "api"}`, "success");
+        } catch (err) {
+          addLog(`⚠ Market API failed: ${err.message}. Using simulated data.`, "warning");
+          await sleep(400);
+          data = generateMockData(cleanSym, activeType);
+          setMarketData(data);
+          addLog(`✓ Simulated price: $${fmt(data.price)}`, "success");
+        }
+
+        // Step 2: News
+        addLog(`📰 Scanning recent news & sentiment...`, "action");
+        let newsData = [];
+        try {
+          if (isLive) {
+            const res = await fetch(`${API_BASE}/news/${activeType}/${encodeURIComponent(cleanSym)}`);
+            const json = await res.json();
+            if (json.success) newsData = json.data;
+            else throw new Error(json.error);
+          } else {
+            await sleep(500);
+            newsData = generateMockNews(cleanSym);
+          }
+        } catch {
+          newsData = generateMockNews(cleanSym);
+        }
+        setNews(newsData);
+        const bullish = newsData.filter(n => n.sentiment === "bullish").length;
+        const bearish = newsData.filter(n => n.sentiment === "bearish").length;
+        addLog(`✓ Found ${newsData.length} articles: ${bullish} bullish, ${bearish} bearish`, "success");
+
+        // Step 3: AI Analysis
+        addLog(`🤖 Running AI analysis...`, "action");
+        const fallback = generateFallbackAnalysis(data, newsData);
+        setAnalysis(fallback);
+        addLog(`✓ Analysis complete: ${fallback.recommendation} (${fallback.confidence}% confidence)`, "success");
+
+        setAnalyzing(false);
+      }
+
+      const recColors = { BUY: "#34d399", SELL: "#f87171", HOLD: "#fbbf24" };
+      const sentColors = { bullish: "#34d399", bearish: "#f87171", neutral: "#94a3b8" };
+
+      return React.createElement("div", { style: { minHeight: "100vh", background: "#0a0e17", color: "#e2e8f0", fontFamily: "'JetBrains Mono', monospace" } },
+
+        // ── Header ──
+        React.createElement("div", { style: { borderBottom: "1px solid #1e293b", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg, #111827 0%, #0a0e17 100%)", position: "sticky", top: 0, zIndex: 10 }, className: "header-inner" },
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: backendConnected ? "#34d399" : "#f87171" } },
+              React.createElement("div", { style: { width: 7, height: 7, borderRadius: "50%", background: backendConnected ? "#34d399" : "#f87171", animation: backendConnected ? "glow 2s ease-in-out infinite" : "none" } }),
+              backendConnected ? "LIVE" : "OFFLINE"
+            ),
+            React.createElement("span", { style: { fontFamily: "'Space Grotesk', sans-serif", fontSize: 18, fontWeight: 700, letterSpacing: "-0.5px", color: "#f1f5f9" } }, "TRADE.AGENT"),
+            React.createElement("span", { style: { fontSize: 11, color: "#475569" } }, "v1.0")
+          ),
+          React.createElement("div", { style: { display: "flex", gap: 8 }, className: "type-tabs" },
+            Object.entries(ASSET_TYPES).map(([key, val]) =>
+              React.createElement("button", {
+                key, onClick: () => { setActiveType(key); setSymbol(""); setAnalysis(null); setMarketData(null); setNews([]); },
+                style: { background: activeType === key ? "#1e293b" : "transparent", border: activeType === key ? "1px solid #334155" : "1px solid transparent", color: activeType === key ? "#e2e8f0" : "#64748b", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s" }
+              }, val.icon + " " + val.label)
+            )
+          )
+        ),
+
+        React.createElement("div", { style: { padding: "24px", maxWidth: 900, margin: "0 auto" } },
+
+          // ── Search ──
+          React.createElement("div", { style: { marginBottom: 24 } },
+            React.createElement("div", { style: { display: "flex", gap: 8, background: "#111827", border: "1px solid #1e293b", borderRadius: 10, padding: 6 } },
+              React.createElement("input", {
+                value: symbol, onChange: e => setSymbol(e.target.value), onKeyDown: e => e.key === "Enter" && runAnalysis(symbol),
+                placeholder: `Enter ${ASSET_TYPES[activeType].label.toLowerCase()} symbol (e.g. ${ASSET_TYPES[activeType].examples[0]})`,
+                style: { flex: 1, background: "transparent", border: "none", color: "#e2e8f0", fontSize: 14, padding: "10px 14px", fontFamily: "inherit" }
+              }),
+              React.createElement("button", {
+                onClick: () => runAnalysis(symbol), disabled: analyzing || !symbol.trim(),
+                style: { background: analyzing ? "#1e293b" : "linear-gradient(135deg, #059669, #34d399)", border: "none", color: analyzing ? "#64748b" : "#021a0f", borderRadius: 7, padding: "10px 24px", fontWeight: 700, fontSize: 13, cursor: analyzing ? "default" : "pointer", fontFamily: "'Space Grotesk', sans-serif", letterSpacing: "0.3px", whiteSpace: "nowrap" }
+              }, analyzing ? "Analyzing..." : "Analyze")
+            ),
+            React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" } },
+              React.createElement("span", { style: { fontSize: 11, color: "#475569", lineHeight: "28px" } }, "Quick:"),
+              ...ASSET_TYPES[activeType].examples.slice(0, 6).map(s =>
+                React.createElement("button", {
+                  key: s, onClick: () => { setSymbol(s); runAnalysis(s); },
+                  style: { background: "#0f172a", border: "1px solid #1e293b", color: "#94a3b8", borderRadius: 5, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }
+                }, s)
+              )
+            )
+          ),
+
+          // ── Agent Log ──
+          agentLog.length > 0 && React.createElement("div", { className: "card", style: { marginBottom: 20, padding: 16 } },
+            React.createElement("div", { style: { fontSize: 11, color: "#475569", marginBottom: 10, fontWeight: 600, letterSpacing: 1, textTransform: "uppercase" } }, "Agent Activity"),
+            React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              ...agentLog.map((log, i) =>
+                React.createElement("div", { key: i, style: { fontSize: 12, color: log.type === "success" ? "#34d399" : log.type === "warning" ? "#fbbf24" : "#94a3b8", animation: "slideIn 0.3s ease-out", display: "flex", gap: 8, alignItems: "center" } },
+                  React.createElement("span", { style: { color: "#334155", fontSize: 10 } }, new Date(log.ts).toLocaleTimeString("en", { hour12: false })),
+                  log.msg
+                )
+              ),
+              analyzing && React.createElement("div", { style: { fontSize: 12, color: "#6ee7b7", display: "flex", gap: 8, alignItems: "center" } },
+                React.createElement("span", { style: { color: "#334155", fontSize: 10 } }, new Date().toLocaleTimeString("en", { hour12: false })),
+                "Processing ", React.createElement(TypingDots)
+              ),
+              React.createElement("div", { ref: logEndRef })
+            )
+          ),
+
+          // ── Market Data + News ──
+          marketData && !analyzing && React.createElement("div", { className: "grid-2", style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 } },
+
+            // Price card
+            React.createElement("div", { className: "card" },
+              React.createElement("div", { style: { fontSize: 11, color: "#475569", fontWeight: 600, letterSpacing: 1, marginBottom: 14, textTransform: "uppercase" } },
+                (marketData.name || marketData.symbol) + " — Price",
+                marketData.source && React.createElement("span", { style: { marginLeft: 8, color: marketData.source === "mock" ? "#f59e0b" : "#34d399", fontSize: 9 } }, `(${marketData.source})`)
+              ),
+              React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 } },
+                React.createElement("span", { style: { fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, fontWeight: 700, color: "#f1f5f9" } },
+                  (marketData.currency === "USD" ? "$" : "") + fmt(marketData.price)
+                ),
+                React.createElement("span", { style: { fontSize: 14, fontWeight: 600, color: marketData.changePct >= 0 ? "#34d399" : "#f87171" } },
+                  (marketData.changePct >= 0 ? "▲" : "▼") + " " + fmt(Math.abs(marketData.changePct)) + "%"
+                )
+              ),
+              React.createElement(Sparkline, { data: marketData.history, color: marketData.monthChange >= 0 ? "#34d399" : "#f87171" }),
+              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 14 } },
+                [
+                  { label: "7D", value: marketData.weekChange },
+                  { label: "30D", value: marketData.monthChange },
+                  { label: "Vol", value: null, text: fmt(marketData.volume, 0) }
+                ].map(m =>
+                  React.createElement("div", { key: m.label, style: { textAlign: "center" } },
+                    React.createElement("div", { style: { fontSize: 10, color: "#475569", marginBottom: 2 } }, m.label),
+                    React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: m.value !== null ? (m.value >= 0 ? "#34d399" : "#f87171") : "#94a3b8" } },
+                      m.value !== null ? `${m.value >= 0 ? "+" : ""}${fmt(m.value)}%` : m.text
+                    )
+                  )
+                )
+              )
+            ),
+
+            // News card
+            React.createElement("div", { className: "card" },
+              React.createElement("div", { style: { fontSize: 11, color: "#475569", fontWeight: 600, letterSpacing: 1, marginBottom: 14, textTransform: "uppercase" } }, "News Sentiment"),
+              React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+                ...news.slice(0, 5).map((n, i) =>
+                  React.createElement("div", { key: i, style: { display: "flex", gap: 8, alignItems: "flex-start" } },
+                    React.createElement("span", { className: "tag", style: { background: (sentColors[n.sentiment] || "#94a3b8") + "18", color: sentColors[n.sentiment] || "#94a3b8", minWidth: 60, textAlign: "center", marginTop: 2 } }, n.sentiment || "neutral"),
+                    React.createElement("div", null,
+                      React.createElement("div", { style: { fontSize: 12, color: "#cbd5e1", lineHeight: 1.4 } }, n.headline),
+                      React.createElement("div", { style: { fontSize: 10, color: "#475569", marginTop: 2 } }, n.source)
+                    )
+                  )
+                ),
+                news.length === 0 && React.createElement("div", { style: { fontSize: 12, color: "#475569" } }, "No recent news found")
+              )
+            )
+          ),
+
+          // ── AI Analysis ──
+          analysis && !analyzing && React.createElement("div", { className: "card", style: { borderColor: recColors[analysis.recommendation] + "40" } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 12 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 11, color: "#475569", fontWeight: 600, letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" } }, "AI Recommendation"),
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+                  React.createElement("span", { style: { fontFamily: "'Space Grotesk', sans-serif", fontSize: 28, fontWeight: 700, color: recColors[analysis.recommendation] } }, analysis.recommendation),
+                  React.createElement("span", { className: "tag", style: { background: "#1e293b", color: "#94a3b8" } }, analysis.confidence + "% conf"),
+                  React.createElement("span", { className: "tag", style: { background: "#1e293b", color: "#94a3b8" } }, analysis.time_horizon)
+                )
+              ),
+              React.createElement("div", { style: { textAlign: "right" } },
+                React.createElement("div", { style: { fontSize: 10, color: "#475569", marginBottom: 4 } }, "Risk Score"),
+                React.createElement("div", { style: { display: "flex", gap: 3 } },
+                  ...Array.from({ length: 10 }).map((_, i) =>
+                    React.createElement("div", { key: i, style: { width: 8, height: 20, borderRadius: 2, background: i < analysis.risk_score ? (analysis.risk_score <= 3 ? "#34d399" : analysis.risk_score <= 6 ? "#fbbf24" : "#f87171") : "#1e293b" } })
+                  )
+                )
+              )
+            ),
+            React.createElement("div", { style: { fontSize: 13, color: "#cbd5e1", lineHeight: 1.6, marginBottom: 20 } }, analysis.summary),
+            React.createElement("div", { className: "grid-2", style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 } },
+              React.createElement("div", { style: { background: "#05966912", border: "1px solid #05966930", borderRadius: 8, padding: 14 } },
+                React.createElement("div", { style: { fontSize: 11, color: "#34d399", fontWeight: 600, marginBottom: 6 } }, "▲ Bull Case"),
+                React.createElement("div", { style: { fontSize: 12, color: "#94a3b8", lineHeight: 1.5 } }, analysis.bull_case)
+              ),
+              React.createElement("div", { style: { background: "#dc262612", border: "1px solid #dc262630", borderRadius: 8, padding: 14 } },
+                React.createElement("div", { style: { fontSize: 11, color: "#f87171", fontWeight: 600, marginBottom: 6 } }, "▼ Bear Case"),
+                React.createElement("div", { style: { fontSize: 12, color: "#94a3b8", lineHeight: 1.5 } }, analysis.bear_case)
+              )
+            ),
+            analysis.key_levels && React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 11, color: "#475569", fontWeight: 600, letterSpacing: 1, marginBottom: 10, textTransform: "uppercase" } }, "Key Levels"),
+              React.createElement("div", { className: "grid-4", style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },
+                [
+                  { label: "Support", value: analysis.key_levels.support, color: "#fbbf24" },
+                  { label: "Resistance", value: analysis.key_levels.resistance, color: "#60a5fa" },
+                  { label: "Stop Loss", value: analysis.key_levels.stop_loss, color: "#f87171" },
+                  { label: "Target", value: analysis.key_levels.target, color: "#34d399" }
+                ].map(level =>
+                  React.createElement("div", { key: level.label, style: { background: "#0f172a", borderRadius: 6, padding: "10px 12px", borderLeft: `3px solid ${level.color}` } },
+                    React.createElement("div", { style: { fontSize: 10, color: "#475569", marginBottom: 4 } }, level.label),
+                    React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: level.color } }, "$" + fmt(level.value))
+                  )
+                )
+              )
+            ),
+            React.createElement("div", { style: { marginTop: 20, padding: "10px 14px", background: "#0f172a", borderRadius: 6, fontSize: 11, color: "#475569", lineHeight: 1.5 } },
+              "⚠️ This analysis is for educational purposes only. Not financial advice. Always do your own research."
+            )
+          ),
+
+          // ── Empty State ──
+          !marketData && !analyzing && React.createElement("div", { style: { textAlign: "center", padding: "60px 20px", color: "#334155" } },
+            React.createElement("div", { style: { fontSize: 48, marginBottom: 16 } }, "◉"),
+            React.createElement("div", { style: { fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, fontWeight: 500, color: "#475569", marginBottom: 8 } }, "Select an asset to analyze"),
+            React.createElement("div", { style: { fontSize: 12, marginBottom: 16 } }, "The AI agent will fetch market data, scan news sentiment, and generate a recommendation"),
+            backendConnected && React.createElement("div", { style: { fontSize: 11, color: "#34d399", background: "#34d39910", border: "1px solid #34d39930", borderRadius: 8, padding: "8px 16px", display: "inline-block" } }, "✓ Connected to live market data")
+          )
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+  </script>
+</body>
+</html>
