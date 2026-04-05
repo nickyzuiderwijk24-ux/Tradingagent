@@ -19,8 +19,8 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Serve frontend
-app.use(express.static(path.join(__dirname, "public")));
+// Serve frontend (index.html in root)
+app.use(express.static(path.join(__dirname)));
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -345,7 +345,7 @@ app.get("/api/health", (req, res) => {
 // SPA catch-all — serve index.html for non-API routes
 app.get("*", (req, res) => {
   if (!req.path.startsWith("/api")) {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
+    res.sendFile(path.join(__dirname, "index.html"));
   }
 });
 
